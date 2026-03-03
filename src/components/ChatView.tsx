@@ -4,6 +4,14 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, FormEvent } from "react";
 import { useLogin3Auth } from "@/contexts/Login3AuthContext";
+import { loadStripe } from "@stripe/stripe-js";
+
+interface CardSummary {
+  brand: string;
+  last4: string;
+  exp_month: number;
+  exp_year: number;
+}
 
 interface ChatViewProps {
   onRefreshBalance: () => void;
@@ -27,17 +35,104 @@ export default function ChatView({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [input, setInput] = useState("");
 
+  // Stripe state
+  const [stripeCustomerId, setStripeCustomerId] = useState<string | null>(null);
+  const [cardInfo, setCardInfo] = useState<CardSummary | null>(null);
+  const [setupLoading, setSetupLoading] = useState(false);
+
   // Keep refs so the transport body/headers always have latest data
   const connectedRef = useRef(connectedAddress);
   const idTokenRef = useRef(idToken);
+  const stripeCustomerIdRef = useRef(stripeCustomerId);
 
   // Update refs in useLayoutEffect to avoid lint errors about accessing refs during render
   useLayoutEffect(() => {
     connectedRef.current = connectedAddress;
     idTokenRef.current = idToken;
-  }, [connectedAddress, idToken]);
+    stripeCustomerIdRef.current = stripeCustomerId;
+  }, [connectedAddress, idToken, stripeCustomerId]);
 
-  /* eslint-disable react-hooks/refs -- refs are accessed in a lazy callback (body/headers function), not during render */
+  // Fetch card info from Stripe
+  const fetchCardInfo = useCallback(async (customerId: string) => {
+    if (!idTokenRef.current) return;
+    try {
+      const res = await fetch(
+        `/api/stripe/payment-status?customer_id=${encodeURIComponent(customerId)}`,
+        { headers: { Authorization: `Bearer ${idTokenRef.current}` } }
+      );
+      const json = await res.json();
+      if (json.has_payment_method && json.card_summary) {
+        setCardInfo(json.card_summary);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  // Handle Stripe setup redirect on mount
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const setupResult = params.get("stripe_setup");
+    const customerId = params.get("customer_id");
+
+    if (setupResult === "success" && customerId) {
+      localStorage.setItem("stripe_customer_id", customerId);
+      setStripeCustomerId(customerId);
+      window.history.replaceState({}, "", "/");
+      fetchCardInfo(customerId);
+    } else {
+      const saved = localStorage.getItem("stripe_customer_id");
+      if (saved) {
+        setStripeCustomerId(saved);
+        fetchCardInfo(saved);
+      }
+    }
+  }, [fetchCardInfo]);
+
+  // Handle "Add Card" click
+  const handleAddCard = async () => {
+    if (!idToken || setupLoading) return;
+    setSetupLoading(true);
+    try {
+      const res = await fetch("/api/stripe/setup", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+      });
+      const json = await res.json();
+      if (json.success && json.url) {
+        window.location.href = json.url;
+      }
+    } catch {
+      // ignore
+    } finally {
+      setSetupLoading(false);
+    }
+  };
+
+  // Handle 3DS popup
+  const handle3DS = useCallback(async (clientSecret: string, paymentIntentId: string) => {
+    const publishableKey = process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY;
+    if (!publishableKey) return;
+
+    const stripeJs = await loadStripe(publishableKey);
+    if (!stripeJs) return;
+
+    const { error } = await stripeJs.handleCardAction(clientSecret);
+    if (error) {
+      sendMessage({
+        text: `3D Secure authentication failed: ${error.message}. The payment was not completed.`,
+      });
+    } else {
+      sendMessage({
+        text: `3D Secure authentication complete. Please verify the payment with intent ID: ${paymentIntentId}`,
+      });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
@@ -48,11 +143,11 @@ export default function ChatView({
         }),
         body: () => ({
           connectedAddress: connectedRef.current,
+          stripeCustomerId: stripeCustomerIdRef.current ?? undefined,
         }),
       }),
     []
   );
-  /* eslint-enable react-hooks/refs */
 
   const { messages, sendMessage, status, error } = useChat({ transport });
 
@@ -69,18 +164,30 @@ export default function ChatView({
   const processedToolsRef = useRef<Set<string>>(new Set());
 
   const handleToolOutput = useCallback(
-    (toolKey: string, toolName: string) => {
+    (toolKey: string, toolName: string, output: unknown) => {
       if (processedToolsRef.current.has(toolKey)) return;
       processedToolsRef.current.add(toolKey);
 
       if (toolName === "check_balance" || toolName === "request_faucet" || toolName === "send_payment" || toolName === "buy_product") {
         onRefreshBalance();
       }
+
+      // Handle 3DS requirement from buy_with_stripe
+      if (toolName === "buy_with_stripe" && output && typeof output === "object") {
+        const data = output as Record<string, unknown>;
+        if (
+          data.requires_stripe_action &&
+          typeof data.client_secret === "string" &&
+          typeof data.payment_intent_id === "string"
+        ) {
+          handle3DS(data.client_secret, data.payment_intent_id);
+        }
+      }
     },
-    [onRefreshBalance]
+    [onRefreshBalance, handle3DS]
   );
 
-  // Sync balance refreshes from tool calls
+  // Sync balance refreshes and 3DS from tool calls
   useEffect(() => {
     for (const msg of messages) {
       if (msg.role !== "assistant" || !msg.parts) continue;
@@ -91,7 +198,7 @@ export default function ChatView({
 
         if (p.state === "output-available") {
           const toolKey = `${msg.id}-${toolName}-${p.toolCallId ?? ""}`;
-          handleToolOutput(toolKey, toolName);
+          handleToolOutput(toolKey, toolName, p.output);
         }
       }
     }
@@ -130,6 +237,37 @@ export default function ChatView({
             <p className="text-xs mb-6" style={{ color: "var(--text-tertiary)" }}>
               Your AI payment assistant on Base Sepolia
             </p>
+
+            {/* Stripe card info */}
+            {cardInfo && (
+              <div
+                data-testid="card-info"
+                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg mb-4 text-xs"
+                style={{ background: "var(--bg-secondary)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="1" y="4" width="22" height="16" rx="2" ry="2" />
+                  <line x1="1" y1="10" x2="23" y2="10" />
+                </svg>
+                {cardInfo.brand} ****{cardInfo.last4}
+              </div>
+            )}
+
+            {/* Add Card button */}
+            {!cardInfo && (
+              <button
+                data-testid="add-card-button"
+                onClick={handleAddCard}
+                disabled={setupLoading}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg mb-4 text-xs transition-opacity hover:opacity-80 disabled:opacity-50"
+                style={{ background: "var(--bg-secondary)", border: "1px solid var(--border)", color: "var(--text-secondary)" }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+                {setupLoading ? "Redirecting..." : "+ Add Card"}
+              </button>
+            )}
 
             {/* Quick Actions */}
             <div className="space-y-2 max-w-xs mx-auto">

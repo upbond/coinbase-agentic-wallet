@@ -170,5 +170,43 @@ export async function mockApiRoutes(
     });
   });
 
+  // POST /api/stripe/setup — return mock checkout URL
+  await page.route("**/api/stripe/setup", async (route, request) => {
+    if (request.method() !== "POST") {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        success: true,
+        url: "https://checkout.stripe.com/mock-session",
+      }),
+    });
+  });
+
+  // GET /api/stripe/payment-status — return mock card info
+  await page.route("**/api/stripe/payment-status*", async (route, request) => {
+    if (request.method() !== "GET") {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        success: true,
+        has_payment_method: true,
+        card_summary: {
+          brand: "visa",
+          last4: "4242",
+          exp_month: 12,
+          exp_year: 2027,
+        },
+      }),
+    });
+  });
+
   return { balances };
 }

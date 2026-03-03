@@ -213,6 +213,47 @@ export function signMessageStream(
   ].join("");
 }
 
+/** Build SSE body for "buy with Stripe" scenario */
+export function buyWithStripeStream(): string {
+  const toolCallId = "call_stripe_buy_1";
+  const textId = "text_1";
+  return [
+    msgStart(),
+    stepStart(),
+    toolInputStart(toolCallId, "buy_with_stripe"),
+    toolInputAvailable(toolCallId, "buy_with_stripe", {
+      stripe_customer_id: "cus_mock123",
+    }),
+    toolOutputAvailable(toolCallId, {
+      success: true,
+      amount_charged: "$1.00 USD",
+      payment_intent_id: "pi_mock456",
+      product: "Premium AI Market Report",
+      data: {
+        report_id: "RPT-MOCK1234",
+        title: "AI Market Analysis Report",
+        executive_summary:
+          "Strong bullish momentum detected across tech and DeFi sectors.",
+        key_findings: [
+          "AI infrastructure spending up 42% YoY",
+          "Base ecosystem TVL growing at record pace",
+        ],
+      },
+    }),
+    stepFinish(),
+    stepStart(),
+    textStart(textId),
+    textDelta(
+      textId,
+      `Purchased **Premium AI Market Report** for $1.00!\n\nKey findings:\n- AI infrastructure spending up 42% YoY\n- Base ecosystem TVL growing at record pace`
+    ),
+    textEnd(textId),
+    stepFinish(),
+    msgFinish(),
+    sseDone(),
+  ].join("");
+}
+
 /** Build SSE body for "buy product" scenario (x402-style payment) */
 export function buyProductStream(): string {
   const toolCallId = "call_buy_1";
@@ -309,6 +350,7 @@ type ChatScenario =
   | "send-usdc"
   | "sign-message"
   | "buy-product"
+  | "buy-with-stripe"
   | "general-response"
   | "slow-response";
 
@@ -323,6 +365,7 @@ const scenarioBuilders: Record<ChatScenario, () => string> = {
     sendPaymentStream(WALLETS.bob.address, "1", "usdc"),
   "sign-message": () => signMessageStream(),
   "buy-product": () => buyProductStream(),
+  "buy-with-stripe": () => buyWithStripeStream(),
   "general-response": () =>
     generalResponseStream(
       "I'm PayAgent, your AI payment assistant on Base Sepolia. How can I help?"

@@ -13,6 +13,13 @@ import {
   verifyPayment,
   buildProduct,
 } from "@/lib/shop";
+import {
+  STRIPE_PRODUCT,
+  chargeCustomer,
+  verifyPaymentIntent,
+  buildStripeProduct,
+  getDefaultPaymentMethod,
+} from "@/lib/stripe";
 
 export const maxDuration = 60;
 
@@ -36,6 +43,9 @@ const TOOL_NAMES = [
   "send_payment",
   "sign_message",
   "buy_product",
+  "buy_with_stripe",
+  "verify_stripe_payment",
+  "stripe_check_setup",
 ];
 
 function snakeToPascalTool(snake: string): string {
@@ -164,7 +174,8 @@ function isValidAddress(addr: string): addr is `0x${string}` {
 function buildSystemPrompt(
   agentWalletName: string,
   agentWalletAddress: string,
-  connectedAddress: string | undefined
+  connectedAddress: string | undefined,
+  stripeCustomerId: string | undefined
 ): string {
   let walletSection = "";
   if (connectedAddress) {
@@ -172,11 +183,19 @@ function buildSystemPrompt(
   }
   walletSection += `Agent wallet: "${agentWalletName}" (${agentWalletAddress})`;
 
+  const stripeSection = stripeCustomerId
+    ? `The user has a Stripe payment method set up. Their Stripe Customer ID is: ${stripeCustomerId}. When they ask to buy something with a card, use this customer ID directly with buy_with_stripe.`
+    : `The user has NOT set up a Stripe payment method yet. If they want to buy with a card, tell them to click the "+ Add Card" button first.`;
+
   return `You are PayAgent, an AI payment assistant on Base Sepolia testnet.
 
 === USER'S WALLETS (you know this) ===
 ${walletSection}
 === END WALLETS ===
+
+=== STRIPE ===
+${stripeSection}
+=== END STRIPE ===
 
 When the user asks "what wallets do I have", "my address", "my wallet", or similar, answer using the wallet info above. Never say you don't have this info.
 
@@ -186,6 +205,9 @@ Tools available:
 - request_faucet: Get testnet ETH or USDC from the faucet
 - sign_message: Sign an arbitrary text message with the user's agent wallet (EIP-191)
 - buy_product: Purchase premium weather data using x402-style ETH payment (costs ${PAYMENT_REQUIREMENTS.price_eth} ETH)
+- buy_with_stripe: Purchase a premium AI market report ($${(STRIPE_PRODUCT.price_cents / 100).toFixed(2)}) using the user's saved Stripe card
+- verify_stripe_payment: Verify a Stripe payment after 3D Secure authentication
+- stripe_check_setup: Check if the user has a saved Stripe payment method
 
 Guidelines:
 - IMPORTANT: Call only ONE tool at a time. Never make parallel/simultaneous tool calls. If you need multiple operations (e.g., request both ETH and USDC), call them one at a time sequentially.
@@ -209,7 +231,7 @@ export async function POST(req: Request) {
   }
 
   try {
-    const { messages: uiMessages, connectedAddress } = await req.json();
+    const { messages: uiMessages, connectedAddress, stripeCustomerId } = await req.json();
     const modelMessages = await convertToModelMessages(uiMessages);
 
     const sanitizedConnectedAddress =
@@ -217,10 +239,16 @@ export async function POST(req: Request) {
         ? connectedAddress
         : undefined;
 
+    const sanitizedStripeCustomerId =
+      typeof stripeCustomerId === "string" && stripeCustomerId.startsWith("cus_")
+        ? stripeCustomerId
+        : undefined;
+
     const systemPrompt = buildSystemPrompt(
       user.agentWalletName,
       user.agentWalletAddress,
-      sanitizedConnectedAddress
+      sanitizedConnectedAddress,
+      sanitizedStripeCustomerId
     );
 
     // Inject wallet context into the first user message as a hidden prefix,
@@ -230,6 +258,9 @@ export async function POST(req: Request) {
       walletContext += `[Context: User's connected browser wallet is ${sanitizedConnectedAddress}] `;
     }
     walletContext += `[Context: User's agent wallet is "${user.agentWalletName}" at ${user.agentWalletAddress}] `;
+    if (sanitizedStripeCustomerId) {
+      walletContext += `[Context: User's Stripe Customer ID is ${sanitizedStripeCustomerId}] `;
+    }
     if (walletContext && modelMessages.length > 0) {
       const first = modelMessages[0];
       if (first.role === "user" && Array.isArray(first.content)) {
@@ -388,6 +419,119 @@ export async function POST(req: Request) {
             success: true,
             ...product,
             explorerUrl: `https://sepolia.basescan.org/tx/${transactionHash}`,
+          };
+        },
+      },
+
+      buy_with_stripe: {
+        description: `Buy a premium AI market report ($${(STRIPE_PRODUCT.price_cents / 100).toFixed(2)}) using the user's saved Stripe card. If 3D Secure is required, returns a client_secret for popup confirmation.`,
+        inputSchema: z.object({
+          stripe_customer_id: z
+            .string()
+            .describe("Stripe Customer ID (cus_...)"),
+        }),
+        execute: async ({
+          stripe_customer_id,
+        }: {
+          stripe_customer_id: string;
+        }) => {
+          const result = await chargeCustomer(
+            stripe_customer_id,
+            STRIPE_PRODUCT.price_cents,
+            STRIPE_PRODUCT.name
+          );
+
+          if (!result.success) {
+            if ("requires_3ds" in result && result.requires_3ds) {
+              return {
+                success: false,
+                requires_stripe_action: true,
+                payment_intent_id: result.payment_intent_id,
+                client_secret: result.client_secret,
+                message: result.reason,
+                instruction:
+                  "A 3D Secure popup will appear for you to complete authentication.",
+              };
+            }
+            return { success: false, error: result.reason };
+          }
+
+          const product = buildStripeProduct(
+            result.payment_intent_id,
+            STRIPE_PRODUCT.price_cents
+          );
+          return {
+            success: true,
+            amount_charged: `$${(STRIPE_PRODUCT.price_cents / 100).toFixed(2)} USD`,
+            payment_intent_id: result.payment_intent_id,
+            ...product,
+          };
+        },
+      },
+
+      verify_stripe_payment: {
+        description:
+          "Verify a Stripe payment after the user completed 3D Secure authentication in a popup",
+        inputSchema: z.object({
+          payment_intent_id: z
+            .string()
+            .describe("Stripe PaymentIntent ID (pi_...)"),
+        }),
+        execute: async ({
+          payment_intent_id,
+        }: {
+          payment_intent_id: string;
+        }) => {
+          const { success, reason } =
+            await verifyPaymentIntent(payment_intent_id);
+          if (!success) {
+            return { success: false, error: reason };
+          }
+          const product = buildStripeProduct(
+            payment_intent_id,
+            STRIPE_PRODUCT.price_cents
+          );
+          return {
+            success: true,
+            amount_charged: `$${(STRIPE_PRODUCT.price_cents / 100).toFixed(2)} USD`,
+            payment_intent_id,
+            ...product,
+          };
+        },
+      },
+
+      stripe_check_setup: {
+        description:
+          "Check if the user has a saved Stripe payment method ready for autonomous payments",
+        inputSchema: z.object({
+          stripe_customer_id: z
+            .string()
+            .describe("Stripe Customer ID (cus_...)"),
+        }),
+        execute: async ({
+          stripe_customer_id,
+        }: {
+          stripe_customer_id: string;
+        }) => {
+          const result = await getDefaultPaymentMethod(stripe_customer_id);
+          if (!result.valid) {
+            return {
+              success: true,
+              has_payment_method: false,
+              message: result.reason,
+            };
+          }
+          return {
+            success: true,
+            has_payment_method: true,
+            card: result.card
+              ? {
+                  brand: result.card.brand,
+                  last4: result.card.last4,
+                  exp_month: result.card.exp_month,
+                  exp_year: result.card.exp_year,
+                }
+              : null,
           };
         },
       },
