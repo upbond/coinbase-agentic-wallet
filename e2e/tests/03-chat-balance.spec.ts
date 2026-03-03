@@ -1,9 +1,10 @@
 import { test, expect } from "@playwright/test";
-import { mockApiRoutes } from "../fixtures/api-mocks";
+import { mockApiRoutes, mockLogin3Session } from "../fixtures/api-mocks";
 import { mockChatRoute } from "../fixtures/chat-mock";
 
 test.describe("Section 3: Chat Balance Check", () => {
   test("3-1/3-2: check balance shows ETH and USDC", async ({ page }) => {
+    await mockLogin3Session(page);
     await mockApiRoutes(page);
     await mockChatRoute(page, ["create-wallet", "check-balance"]);
     await page.goto("/");

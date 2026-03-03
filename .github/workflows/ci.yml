@@ -33,9 +33,27 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm tsc --noEmit
 
+  unit-test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
+    env:
+      NEXT_PUBLIC_LOGIN3_DOMAIN: https://login3.test.example.com
+      NEXT_PUBLIC_LOGIN3_CLIENT_ID: test-login3-client-id
+      NEXT_PUBLIC_LOGIN3_REDIRECT_URI: http://localhost:3000/api/auth/callback
+      LOGIN3_CLIENT_SECRET: test-login3-client-secret
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

@@ -5,8 +5,8 @@ import { useAccount } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import WalletView from "@/components/WalletView";
 import ChatView from "@/components/ChatView";
-
 import BottomNav from "@/components/BottomNav";
+import { useLogin3Auth } from "@/contexts/Login3AuthContext";
 
 export interface WalletInfo {
   name: string;
@@ -18,6 +18,7 @@ export interface WalletInfo {
 export type TabType = "wallet" | "chat";
 
 export default function Home() {
+  const { isLoading: authLoading, isAuthenticated, startLogin, clearSession } = useLogin3Auth();
   const { address: connectedAddress, isConnected } = useAccount();
   const [activeTab, setActiveTab] = useState<TabType>("chat");
   const [wallets, setWallets] = useState<WalletInfo[]>([]);
@@ -68,6 +69,63 @@ export default function Home() {
     [refreshBalance]
   );
 
+  // ── Auth loading ──
+  if (authLoading) {
+    return (
+      <div
+        className="min-h-screen flex items-center justify-center"
+        style={{ background: "var(--bg-primary)" }}
+      >
+        <div
+          className="w-8 h-8 border-2 rounded-full animate-spin"
+          style={{ borderColor: "var(--accent)", borderTopColor: "transparent" }}
+        />
+      </div>
+    );
+  }
+
+  // ── Login screen ──
+  if (!isAuthenticated) {
+    return (
+      <div
+        data-testid="login-screen"
+        className="min-h-screen flex flex-col items-center justify-center gap-6 px-4"
+        style={{ background: "var(--bg-primary)" }}
+      >
+        <div className="flex items-center gap-3">
+          <div
+            className="w-10 h-10 rounded-lg flex items-center justify-center"
+            style={{ background: "var(--accent)" }}
+          >
+            <svg width="20" height="20" viewBox="0 0 16 16" fill="none">
+              <rect x="3" y="3" width="10" height="10" rx="2" fill="white" />
+            </svg>
+          </div>
+          <span
+            className="text-2xl font-bold"
+            style={{ color: "var(--text-primary)" }}
+          >
+            PayAgent
+          </span>
+        </div>
+        <p
+          className="text-sm text-center max-w-xs"
+          style={{ color: "var(--text-secondary)" }}
+        >
+          Sign in to manage your agentic wallets
+        </p>
+        <button
+          data-testid="login-button"
+          onClick={startLogin}
+          className="px-6 py-3 rounded-xl font-semibold text-white text-sm transition-opacity hover:opacity-90"
+          style={{ background: "#0052FF" }}
+        >
+          Sign In with Login 3.0
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div
       className="min-h-screen flex flex-col"
@@ -96,11 +154,21 @@ export default function Home() {
             PayAgent
           </span>
         </div>
-        <ConnectButton
-          chainStatus="icon"
-          accountStatus="avatar"
-          showBalance={false}
-        />
+        <div className="flex items-center gap-2">
+          <ConnectButton
+            chainStatus="icon"
+            accountStatus="avatar"
+            showBalance={false}
+          />
+          <button
+            data-testid="sign-out-button"
+            onClick={clearSession}
+            className="px-3 py-1.5 rounded-lg text-xs font-medium transition-opacity hover:opacity-80"
+            style={{ color: "var(--text-secondary)", border: "1px solid var(--border)" }}
+          >
+            Sign Out
+          </button>
+        </div>
       </header>
 
       {/* Main Content */}
