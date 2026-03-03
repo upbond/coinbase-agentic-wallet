@@ -7,6 +7,7 @@ import { publicClient } from "@/lib/viem";
 import { getBalances } from "@/lib/balance";
 import { executeTransfer } from "@/lib/transfer";
 import { authenticateRequest } from "@/lib/auth";
+import { checkTransferPolicy, TRANSFER_LIMITS } from "@/lib/policy";
 import {
   PAYMENT_REQUIREMENTS,
   MERCHANT_ADDRESS,
@@ -201,7 +202,7 @@ When the user asks "what wallets do I have", "my address", "my wallet", or simil
 
 Tools available:
 - check_balance: Check ETH and USDC balance of a wallet
-- send_payment: Send ETH or USDC from the user's agent wallet to any address
+- send_payment: Send ETH or USDC from the user's agent wallet (max ${TRANSFER_LIMITS.eth.label}/tx ETH, ${TRANSFER_LIMITS.usdc.label}/tx USDC)
 - request_faucet: Get testnet ETH or USDC from the faucet
 - sign_message: Sign an arbitrary text message with the user's agent wallet (EIP-191)
 - buy_product: Purchase premium weather data using x402-style ETH payment (costs ${PAYMENT_REQUIREMENTS.price_eth} ETH)
@@ -213,6 +214,7 @@ Guidelines:
 - IMPORTANT: Call only ONE tool at a time. Never make parallel/simultaneous tool calls. If you need multiple operations (e.g., request both ETH and USDC), call them one at a time sequentially.
 - Be concise and friendly. Use short responses.
 - Always confirm the details before sending a payment (amount, token, recipient).
+- Transfer limits: max ${TRANSFER_LIMITS.eth.label} per ETH transaction, max ${TRANSFER_LIMITS.usdc.label} per USDC transaction. Warn the user BEFORE attempting if the amount exceeds the limit.
 - When showing addresses, abbreviate them (0x1234...abcd).
 - The user has exactly one agent wallet. Use it for all operations.
 - Proactively suggest getting faucet funds if the wallet has zero balance.
@@ -348,6 +350,10 @@ export async function POST(req: Request) {
         }) => {
           if (!isValidAddress(toAddress)) {
             return { success: false, error: "Invalid recipient address" };
+          }
+          const policyCheck = checkTransferPolicy(amount, token);
+          if (!policyCheck.allowed) {
+            return { success: false, error: policyCheck.reason };
           }
           const result = await executeTransfer({
             fromWalletName: user.agentWalletName,

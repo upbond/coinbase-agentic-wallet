@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { isAddress } from "viem";
 import { executeTransfer } from "@/lib/transfer";
 import { authenticateRequest } from "@/lib/auth";
+import { checkTransferPolicy } from "@/lib/policy";
 
 export const maxDuration = 60;
 
@@ -48,6 +49,14 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { success: false, error: `Unsupported token: ${token}` },
         { status: 400 }
+      );
+    }
+
+    const policyCheck = checkTransferPolicy(amount, token);
+    if (!policyCheck.allowed) {
+      return NextResponse.json(
+        { success: false, error: policyCheck.reason },
+        { status: 403 }
       );
     }
 
