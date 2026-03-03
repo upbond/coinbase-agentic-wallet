@@ -9,6 +9,7 @@ interface WalletViewProps {
   onRefreshBalance: (address: string) => void;
   onRefreshAll: () => void;
   loading: boolean;
+  idToken: string | null;
 }
 
 function formatBalance(val: string | undefined): string {
@@ -43,6 +44,7 @@ export default function WalletView({
   onRefreshBalance,
   onRefreshAll,
   loading,
+  idToken,
 }: WalletViewProps) {
   const [walletName, setWalletName] = useState("");
   const [creating, setCreating] = useState(false);
@@ -63,7 +65,10 @@ export default function WalletView({
     try {
       const res = await fetch("/api/wallet", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+        },
         body: JSON.stringify({ name: walletName.trim() }),
       });
       const json = await res.json();
@@ -90,7 +95,10 @@ export default function WalletView({
     try {
       const res = await fetch("/api/faucet", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}),
+        },
         body: JSON.stringify({ address, token }),
       });
       const json = await res.json();
