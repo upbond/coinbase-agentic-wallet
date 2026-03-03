@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 jobs:
   lint:
@@ -46,14 +45,40 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
 
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    env:
+      # Dummy env vars for build validation (not real credentials)
+      CDP_API_KEY_ID: ci-dummy-key-id
+      CDP_API_KEY_SECRET: ci-dummy-secret
+      CDP_WALLET_SECRET: ci-dummy-wallet
+      ANTHROPIC_BASE_URL: https://ci-dummy.example.com
+      ANTHROPIC_AUTH_TOKEN: ci-dummy-token
+      NEXT_PUBLIC_LOGIN3_DOMAIN: https://login3.test.example.com
+      NEXT_PUBLIC_LOGIN3_CLIENT_ID: ci-login3-client-id
+      NEXT_PUBLIC_LOGIN3_REDIRECT_URI: http://localhost:3000/api/auth/callback
+      NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: ci-dummy-wc-project-id
+      NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_ci_dummy
+      STRIPE_SECRET_KEY: sk_test_ci_dummy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
     env:
       NEXT_PUBLIC_LOGIN3_DOMAIN: https://login3.test.example.com
-      NEXT_PUBLIC_LOGIN3_CLIENT_ID: test-login3-client-id
+      NEXT_PUBLIC_LOGIN3_CLIENT_ID: ci-login3-client-id
       NEXT_PUBLIC_LOGIN3_REDIRECT_URI: http://localhost:3000/api/auth/callback
-      LOGIN3_CLIENT_SECRET: test-login3-client-secret
+      NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID: ci-dummy-wc-project-id
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -63,7 +88,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm exec playwright install --with-deps chromium
-      - run: pnpm exec playwright test
+      - run: pnpm test:e2e
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
