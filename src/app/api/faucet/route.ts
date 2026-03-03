@@ -2,11 +2,20 @@ import { NextResponse } from "next/server";
 import { isAddress } from "viem";
 import { getCdpClient } from "@/lib/cdp";
 import { publicClient } from "@/lib/viem";
+import { authenticateRequest } from "@/lib/auth";
 
 export const maxDuration = 60;
 
 // POST /api/faucet - Request testnet funds
 export async function POST(request: Request) {
+  const user = authenticateRequest(request.headers.get("authorization"));
+  if (!user) {
+    return NextResponse.json(
+      { success: false, error: "Unauthorized" },
+      { status: 401 }
+    );
+  }
+
   try {
     const { address, token = "eth" } = await request.json();
 

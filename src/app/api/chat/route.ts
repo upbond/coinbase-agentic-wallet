@@ -6,6 +6,7 @@ import { getCdpClient } from "@/lib/cdp";
 import { publicClient } from "@/lib/viem";
 import { getBalances } from "@/lib/balance";
 import { executeTransfer } from "@/lib/transfer";
+import { authenticateRequest } from "@/lib/auth";
 
 export const maxDuration = 60;
 
@@ -197,6 +198,14 @@ Guidelines:
 }
 
 export async function POST(req: Request) {
+  const user = authenticateRequest(req.headers.get("authorization"));
+  if (!user) {
+    return new Response(
+      JSON.stringify({ success: false, error: "Unauthorized" }),
+      { status: 401, headers: { "Content-Type": "application/json" } }
+    );
+  }
+
   try {
     const { messages: uiMessages, wallets, connectedAddress } =
       await req.json();

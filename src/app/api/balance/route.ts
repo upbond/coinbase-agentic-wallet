@@ -1,11 +1,20 @@
 import { NextResponse } from "next/server";
 import { isAddress } from "viem";
 import { getBalances } from "@/lib/balance";
+import { authenticateRequest } from "@/lib/auth";
 
 export const maxDuration = 30;
 
 // GET /api/balance?address=0x...
 export async function GET(request: Request) {
+  const user = authenticateRequest(request.headers.get("authorization"));
+  if (!user) {
+    return NextResponse.json(
+      { success: false, error: "Unauthorized" },
+      { status: 401 }
+    );
+  }
+
   try {
     const { searchParams } = new URL(request.url);
     const address = searchParams.get("address");

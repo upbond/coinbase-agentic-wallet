@@ -1,10 +1,19 @@
 import { NextResponse } from "next/server";
 import { getCdpClient } from "@/lib/cdp";
+import { authenticateRequest } from "@/lib/auth";
 
 export const maxDuration = 30;
 
 // POST /api/wallet - Create a new wallet (account)
 export async function POST(request: Request) {
+  const user = authenticateRequest(request.headers.get("authorization"));
+  if (!user) {
+    return NextResponse.json(
+      { success: false, error: "Unauthorized" },
+      { status: 401 }
+    );
+  }
+
   try {
     const { name } = await request.json();
 

@@ -4,6 +4,7 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, FormEvent } from "react";
 import type { WalletInfo } from "@/app/page";
+import { useLogin3Auth } from "@/contexts/Login3AuthContext";
 
 interface ChatViewProps {
   wallets: WalletInfo[];
@@ -27,23 +28,31 @@ export default function ChatView({
   onRefreshBalance,
   connectedAddress,
 }: ChatViewProps) {
+  const { idToken } = useLogin3Auth();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [input, setInput] = useState("");
 
-  // Keep refs so the transport body always has latest data
+  // Keep refs so the transport body/headers always have latest data
   const walletsRef = useRef(wallets);
   const connectedRef = useRef(connectedAddress);
+  const idTokenRef = useRef(idToken);
 
   // Update refs in useLayoutEffect to avoid lint errors about accessing refs during render
   useLayoutEffect(() => {
     walletsRef.current = wallets;
     connectedRef.current = connectedAddress;
-  }, [wallets, connectedAddress]);
+    idTokenRef.current = idToken;
+  }, [wallets, connectedAddress, idToken]);
 
-  /* eslint-disable react-hooks/refs -- refs are accessed in a lazy callback (body function), not during render */
+  /* eslint-disable react-hooks/refs -- refs are accessed in a lazy callback (body/headers function), not during render */
   const transport = useMemo(
     () =>
       new DefaultChatTransport({
+        headers: () => ({
+          ...(idTokenRef.current
+            ? { Authorization: `Bearer ${idTokenRef.current}` }
+            : {}),
+        }),
         body: () => ({
           wallets: walletsRef.current.map((w) => ({
             name: w.name,

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useLayoutEffect } from "react";
 import { useAccount } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import WalletView from "@/components/WalletView";
@@ -18,12 +18,14 @@ export interface WalletInfo {
 export type TabType = "wallet" | "chat";
 
 export default function Home() {
-  const { isLoading: authLoading, isAuthenticated, startLogin, clearSession } = useLogin3Auth();
+  const { idToken, isLoading: authLoading, isAuthenticated, startLogin, clearSession } = useLogin3Auth();
   const { address: connectedAddress, isConnected } = useAccount();
   const [activeTab, setActiveTab] = useState<TabType>("chat");
   const [wallets, setWallets] = useState<WalletInfo[]>([]);
   // Track per-wallet loading state to avoid race conditions
   const loadingAddresses = useRef<Set<string>>(new Set());
+  const idTokenRef = useRef(idToken);
+  useLayoutEffect(() => { idTokenRef.current = idToken; }, [idToken]);
   const [balanceLoading, setBalanceLoading] = useState(false);
 
   const refreshBalance = useCallback(async (address: string) => {
@@ -32,7 +34,12 @@ export default function Home() {
     setBalanceLoading(true);
     try {
       const res = await fetch(
-        `/api/balance?address=${encodeURIComponent(address)}`
+        `/api/balance?address=${encodeURIComponent(address)}`,
+        {
+          headers: idTokenRef.current
+            ? { Authorization: `Bearer ${idTokenRef.current}` }
+            : {},
+        }
       );
       const json = await res.json();
       if (json.success) {
@@ -184,6 +191,7 @@ export default function Home() {
               onRefreshBalance={refreshBalance}
               onRefreshAll={refreshAllBalances}
               loading={balanceLoading}
+              idToken={idToken}
             />
           </div>
           <div style={{ display: activeTab === "chat" ? undefined : "none", height: "100%" }}>

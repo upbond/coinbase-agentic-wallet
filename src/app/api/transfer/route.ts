@@ -1,11 +1,20 @@
 import { NextResponse } from "next/server";
 import { isAddress } from "viem";
 import { executeTransfer } from "@/lib/transfer";
+import { authenticateRequest } from "@/lib/auth";
 
 export const maxDuration = 60;
 
 // POST /api/transfer - Send a payment
 export async function POST(request: Request) {
+  const user = authenticateRequest(request.headers.get("authorization"));
+  if (!user) {
+    return NextResponse.json(
+      { success: false, error: "Unauthorized" },
+      { status: 401 }
+    );
+  }
+
   try {
     const { fromName, to, amount, token = "eth" } = await request.json();
 
