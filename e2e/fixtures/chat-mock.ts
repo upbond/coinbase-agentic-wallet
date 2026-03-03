@@ -78,33 +78,6 @@ function msgFinish(finishReason = "stop"): string {
   return sseEvent({ type: "finish", finishReason });
 }
 
-/** Build a complete SSE body for a "create wallet" scenario */
-export function createWalletStream(
-  walletName = "MyAgent",
-  address = WALLETS.myAgent.address
-): string {
-  const toolCallId = "call_create_wallet_1";
-  const textId = "text_1";
-  const abbrev = `${address.slice(0, 6)}...${address.slice(-4)}`;
-  return [
-    msgStart(),
-    // Step 1: tool call
-    stepStart(),
-    toolInputStart(toolCallId, "create_wallet"),
-    toolInputAvailable(toolCallId, "create_wallet", { name: walletName }),
-    toolOutputAvailable(toolCallId, { success: true, name: walletName, address }),
-    stepFinish(),
-    // Step 2: text response
-    stepStart(),
-    textStart(textId),
-    textDelta(textId, `Wallet **${walletName}** created! Address: \`${abbrev}\``),
-    textEnd(textId),
-    stepFinish(),
-    msgFinish(),
-    sseDone(),
-  ].join("");
-}
-
 /** Build a complete SSE body for a "check balance" scenario */
 export function checkBalanceStream(
   address = WALLETS.myAgent.address,
@@ -131,10 +104,9 @@ export function checkBalanceStream(
   ].join("");
 }
 
-/** Build SSE body for "request faucet" (ETH or USDC) */
+/** Build SSE body for "request faucet" (ETH or USDC) — no address param (server-side) */
 export function faucetStream(
-  token: "eth" | "usdc" = "eth",
-  address = WALLETS.myAgent.address
+  token: "eth" | "usdc" = "eth"
 ): string {
   const toolCallId = "call_faucet_1";
   const textId = "text_1";
@@ -143,7 +115,7 @@ export function faucetStream(
     msgStart(),
     stepStart(),
     toolInputStart(toolCallId, "request_faucet"),
-    toolInputAvailable(toolCallId, "request_faucet", { address, token }),
+    toolInputAvailable(toolCallId, "request_faucet", { token }),
     toolOutputAvailable(toolCallId, {
       success: true,
       token,
@@ -164,9 +136,8 @@ export function faucetStream(
   ].join("");
 }
 
-/** Build SSE body for "send payment" */
+/** Build SSE body for "send payment" — no fromWalletName param (server-side) */
 export function sendPaymentStream(
-  fromName = "MyAgent",
   toAddress = WALLETS.bob.address,
   amount = "0.00001",
   token: "eth" | "usdc" = "eth"
@@ -180,7 +151,6 @@ export function sendPaymentStream(
     stepStart(),
     toolInputStart(toolCallId, "send_payment"),
     toolInputAvailable(toolCallId, "send_payment", {
-      fromWalletName: fromName,
       toAddress,
       amount,
       token,
@@ -201,6 +171,24 @@ export function sendPaymentStream(
       textId,
       `Sent **${amount} ${token.toUpperCase()}** to \`${abbrev}\`. [View on BaseScan](https://sepolia.basescan.org/tx/${txHash})`
     ),
+    textEnd(textId),
+    stepFinish(),
+    msgFinish(),
+    sseDone(),
+  ].join("");
+}
+
+/** Build SSE body for "what is my wallet address?" — plain text response */
+export function walletInfoStream(
+  address = WALLETS.myAgent.address
+): string {
+  const textId = "text_1";
+  const abbrev = `${address.slice(0, 6)}...${address.slice(-4)}`;
+  return [
+    msgStart(),
+    stepStart(),
+    textStart(textId),
+    textDelta(textId, `Your agent wallet address is \`${abbrev}\`.`),
     textEnd(textId),
     stepFinish(),
     msgFinish(),
@@ -236,8 +224,7 @@ export function slowResponseStream(fullText: string): string {
 }
 
 type ChatScenario =
-  | "create-wallet"
-  | "create-wallet-bob"
+  | "wallet-info"
   | "check-balance"
   | "faucet-eth"
   | "faucet-usdc"
@@ -247,16 +234,14 @@ type ChatScenario =
   | "slow-response";
 
 const scenarioBuilders: Record<ChatScenario, () => string> = {
-  "create-wallet": () => createWalletStream(),
-  "create-wallet-bob": () =>
-    createWalletStream("Bob", WALLETS.bob.address),
+  "wallet-info": () => walletInfoStream(),
   "check-balance": () => checkBalanceStream(),
   "faucet-eth": () => faucetStream("eth"),
   "faucet-usdc": () => faucetStream("usdc"),
   "send-eth": () =>
-    sendPaymentStream("MyAgent", WALLETS.bob.address, "0.00001", "eth"),
+    sendPaymentStream(WALLETS.bob.address, "0.00001", "eth"),
   "send-usdc": () =>
-    sendPaymentStream("MyAgent", WALLETS.bob.address, "1", "usdc"),
+    sendPaymentStream(WALLETS.bob.address, "1", "usdc"),
   "general-response": () =>
     generalResponseStream(
       "I'm PayAgent, your AI payment assistant on Base Sepolia. How can I help?"

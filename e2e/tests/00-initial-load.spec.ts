@@ -24,9 +24,9 @@ test.describe("Section 0: Initial Load", () => {
 
   test("0-4: default tab is Chat with suggestions", async ({ page }) => {
     await expect(page.getByTestId("chat-welcome")).toBeVisible();
-    await expect(page.getByTestId("suggestion-0")).toBeVisible();
-    await expect(page.getByTestId("suggestion-1")).toBeVisible();
-    await expect(page.getByTestId("suggestion-2")).toBeVisible();
+    await expect(page.getByTestId("suggestion-0")).toContainText("What is my wallet address?");
+    await expect(page.getByTestId("suggestion-1")).toContainText("Check my balance");
+    await expect(page.getByTestId("suggestion-2")).toContainText("Get testnet ETH from faucet");
   });
 
   test("0-5: bottom navigation shows 2 tabs with Chat active", async ({ page }) => {

@@ -43,7 +43,7 @@ export interface MockWallet {
 }
 
 export const WALLETS = {
-  myAgent: { name: "MyAgent", address: MOCK_ADDRESS_1 } as MockWallet,
+  myAgent: { name: "user_login3-user-123_wallet", address: MOCK_ADDRESS_1 } as MockWallet,
   bob: { name: "Bob", address: MOCK_ADDRESS_2 } as MockWallet,
 };
 
@@ -55,35 +55,34 @@ export async function mockApiRoutes(
   page: Page,
   opts?: {
     balances?: Record<string, { eth: string; usdc: string }>;
-    walletCounter?: { count: number };
   }
 ) {
   const balances = opts?.balances ?? {};
-  const walletCounter = opts?.walletCounter ?? { count: 0 };
 
-  // POST /api/wallet
+  // Ensure default balance for the auto-created wallet
+  if (!balances[MOCK_ADDRESS_1]) {
+    balances[MOCK_ADDRESS_1] = { eth: "0", usdc: "0" };
+  }
+
+  // GET /api/wallet — return user's auto-created wallet with balances
   await page.route("**/api/wallet", async (route, request) => {
-    if (request.method() !== "POST") {
+    if (request.method() !== "GET") {
       await route.fallback();
       return;
     }
-    const body = await request.postDataJSON();
-    const name = body.name?.trim() || "Wallet";
-    const address =
-      walletCounter.count === 0 ? MOCK_ADDRESS_1 : MOCK_ADDRESS_2;
-    walletCounter.count++;
 
-    // Set initial balance for this wallet
-    if (!balances[address]) {
-      balances[address] = { eth: "0", usdc: "0" };
-    }
-
+    const bal = balances[MOCK_ADDRESS_1] ?? { eth: "0", usdc: "0" };
     await route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({
         success: true,
-        data: { name, address },
+        data: {
+          name: WALLETS.myAgent.name,
+          address: MOCK_ADDRESS_1,
+          ethBalance: bal.eth,
+          usdcBalance: bal.usdc,
+        },
       }),
     });
   });
@@ -108,27 +107,26 @@ export async function mockApiRoutes(
     });
   });
 
-  // POST /api/faucet
+  // POST /api/faucet — uses user's agent wallet (address not in body)
   await page.route("**/api/faucet", async (route, request) => {
     if (request.method() !== "POST") {
       await route.fallback();
       return;
     }
     const body = await request.postDataJSON();
-    const address = body.address || "";
     const token = body.token || "eth";
 
-    // Update mock balance
-    if (!balances[address]) {
-      balances[address] = { eth: "0", usdc: "0" };
+    // Update mock balance for the user's wallet
+    if (!balances[MOCK_ADDRESS_1]) {
+      balances[MOCK_ADDRESS_1] = { eth: "0", usdc: "0" };
     }
     if (token === "eth") {
-      balances[address].eth = (
-        parseFloat(balances[address].eth) + 0.0001
+      balances[MOCK_ADDRESS_1].eth = (
+        parseFloat(balances[MOCK_ADDRESS_1].eth) + 0.0001
       ).toString();
     } else {
-      balances[address].usdc = (
-        parseFloat(balances[address].usdc) + 10
+      balances[MOCK_ADDRESS_1].usdc = (
+        parseFloat(balances[MOCK_ADDRESS_1].usdc) + 10
       ).toString();
     }
 
@@ -146,7 +144,7 @@ export async function mockApiRoutes(
     });
   });
 
-  // POST /api/transfer
+  // POST /api/transfer — uses user's agent wallet (fromName not in body)
   await page.route("**/api/transfer", async (route, request) => {
     if (request.method() !== "POST") {
       await route.fallback();
@@ -161,7 +159,7 @@ export async function mockApiRoutes(
         success: true,
         data: {
           transactionHash: MOCK_TX_HASH,
-          from: body.fromName || "unknown",
+          from: MOCK_ADDRESS_1,
           to: body.to || "unknown",
           amount: body.amount || "0",
           token: body.token || "eth",
@@ -172,5 +170,5 @@ export async function mockApiRoutes(
     });
   });
 
-  return { balances, walletCounter };
+  return { balances };
 }

@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
-import { getCdpClient } from "@/lib/cdp";
+import { getBalances } from "@/lib/balance";
 import { authenticateRequest } from "@/lib/auth";
 
 export const maxDuration = 30;
 
-// POST /api/wallet - Create a new wallet (account)
-export async function POST(request: Request) {
-  const user = authenticateRequest(request.headers.get("authorization"));
+// GET /api/wallet — return the user's auto-created agent wallet with balances
+export async function GET(request: Request) {
+  const user = await authenticateRequest(request.headers.get("authorization"));
   if (!user) {
     return NextResponse.json(
       { success: false, error: "Unauthorized" },
@@ -15,40 +15,24 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { name } = await request.json();
-
-    if (typeof name !== "string" || name.trim().length === 0) {
-      return NextResponse.json(
-        { success: false, error: "Wallet name is required" },
-        { status: 400 }
-      );
-    }
-
-    if (name.length > 100) {
-      return NextResponse.json(
-        { success: false, error: "Wallet name must be 100 characters or less" },
-        { status: 400 }
-      );
-    }
-
-    const trimmedName = name.trim();
-    const cdp = getCdpClient();
-    const account = await cdp.evm.getOrCreateAccount({ name: trimmedName });
+    const balances = await getBalances(user.agentWalletAddress as `0x${string}`);
 
     return NextResponse.json({
       success: true,
       data: {
-        name: trimmedName,
-        address: account.address,
+        name: user.agentWalletName,
+        address: user.agentWalletAddress,
+        ethBalance: balances.eth,
+        usdcBalance: balances.usdc,
       },
     });
   } catch (error) {
-    console.error("Wallet creation error:", error);
+    console.error("Wallet fetch error:", error);
     return NextResponse.json(
       {
         success: false,
         error:
-          error instanceof Error ? error.message : "Failed to create wallet",
+          error instanceof Error ? error.message : "Failed to fetch wallet",
       },
       { status: 500 }
     );

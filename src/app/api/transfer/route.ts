@@ -5,9 +5,9 @@ import { authenticateRequest } from "@/lib/auth";
 
 export const maxDuration = 60;
 
-// POST /api/transfer - Send a payment
+// POST /api/transfer - Send a payment from the user's agent wallet
 export async function POST(request: Request) {
-  const user = authenticateRequest(request.headers.get("authorization"));
+  const user = await authenticateRequest(request.headers.get("authorization"));
   if (!user) {
     return NextResponse.json(
       { success: false, error: "Unauthorized" },
@@ -16,18 +16,16 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { fromName, to, amount, token = "eth" } = await request.json();
+    const { to, amount, token = "eth" } = await request.json();
 
     if (
-      typeof fromName !== "string" ||
-      !fromName ||
       typeof to !== "string" ||
       !to ||
       typeof amount !== "string" ||
       !amount
     ) {
       return NextResponse.json(
-        { success: false, error: "fromName, to, and amount are required (all strings)" },
+        { success: false, error: "to and amount are required (both strings)" },
         { status: 400 }
       );
     }
@@ -54,7 +52,7 @@ export async function POST(request: Request) {
     }
 
     const result = await executeTransfer({
-      fromWalletName: fromName,
+      fromWalletName: user.agentWalletName,
       toAddress: to as `0x${string}`,
       amount,
       token,

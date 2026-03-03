@@ -7,7 +7,7 @@ export const maxDuration = 30;
 
 // GET /api/balance?address=0x...
 export async function GET(request: Request) {
-  const user = authenticateRequest(request.headers.get("authorization"));
+  const user = await authenticateRequest(request.headers.get("authorization"));
   if (!user) {
     return NextResponse.json(
       { success: false, error: "Unauthorized" },
