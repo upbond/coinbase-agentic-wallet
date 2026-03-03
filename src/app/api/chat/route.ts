@@ -22,10 +22,9 @@ function getEnvConfig() {
   return { ANTHROPIC_BASE_URL, ANTHROPIC_AUTH_TOKEN };
 }
 
-// Proxy mangles tool names in streaming: create_wallet → CreateWallet_tool
+// Proxy mangles tool names in streaming: check_balance → CheckBalance_tool
 // Build reverse mapping to fix them in the SSE stream
 const TOOL_NAMES = [
-  "create_wallet",
   "check_balance",
   "request_faucet",
   "send_payment",
@@ -107,7 +106,7 @@ function fixParallelToolResults(body: string): string {
 
 // Custom fetch that fixes proxy quirks:
 // 1. Request: Split parallel tool results into sequential pairs
-// 2. Response: Fix mangled tool names (CreateWallet_tool → create_wallet)
+// 2. Response: Fix mangled tool names (CheckBalance_tool → check_balance)
 // 3. Response: Fix wrong tool_calls index (1 → 0)
 function createFixedFetch(): typeof globalThis.fetch {
   return async (input, init) => {
@@ -128,7 +127,7 @@ function createFixedFetch(): typeof globalThis.fetch {
       transform(chunk, controller) {
         let text = new TextDecoder().decode(chunk);
 
-        // Fix mangled tool names: CreateWallet_tool → create_wallet
+        // Fix mangled tool names
         for (const [mangled, original] of Object.entries(MANGLED_TO_ORIGINAL)) {
           text = text.replaceAll(`"${mangled}"`, `"${original}"`);
         }
@@ -155,21 +154,15 @@ function isValidAddress(addr: string): addr is `0x${string}` {
 }
 
 function buildSystemPrompt(
-  knownWallets: { name: string; address: string }[] | undefined,
+  agentWalletName: string,
+  agentWalletAddress: string,
   connectedAddress: string | undefined
 ): string {
   let walletSection = "";
   if (connectedAddress) {
     walletSection += `Connected browser wallet: ${connectedAddress}\n`;
   }
-  if (knownWallets && knownWallets.length > 0) {
-    walletSection += "Agent wallets:\n";
-    walletSection += knownWallets
-      .map((w) => `- "${w.name}": ${w.address}`)
-      .join("\n");
-  } else {
-    walletSection += "Agent wallets: none yet";
-  }
+  walletSection += `Agent wallet: "${agentWalletName}" (${agentWalletAddress})`;
 
   return `You are PayAgent, an AI payment assistant on Base Sepolia testnet.
 
@@ -180,9 +173,8 @@ ${walletSection}
 When the user asks "what wallets do I have", "my address", "my wallet", or similar, answer using the wallet info above. Never say you don't have this info.
 
 Tools available:
-- create_wallet: Create a new agent wallet
 - check_balance: Check ETH and USDC balance of a wallet
-- send_payment: Send ETH or USDC from an agent wallet to any address
+- send_payment: Send ETH or USDC from the user's agent wallet to any address
 - request_faucet: Get testnet ETH or USDC from the faucet
 
 Guidelines:
@@ -190,15 +182,15 @@ Guidelines:
 - Be concise and friendly. Use short responses.
 - Always confirm the details before sending a payment (amount, token, recipient).
 - When showing addresses, abbreviate them (0x1234...abcd).
-- When a user says "send X to Y", figure out which wallet to send from. If they only have one wallet, use that. If multiple, ask which one.
-- Proactively suggest getting faucet funds if a wallet has zero balance.
+- The user has exactly one agent wallet. Use it for all operations.
+- Proactively suggest getting faucet funds if the wallet has zero balance.
 - After successful transactions, share the BaseScan explorer link.
 - You work on Base Sepolia testnet - remind users this is testnet if they seem confused about real funds.
 - Format currency amounts nicely (e.g., "0.001 ETH", "5.00 USDC").`;
 }
 
 export async function POST(req: Request) {
-  const user = authenticateRequest(req.headers.get("authorization"));
+  const user = await authenticateRequest(req.headers.get("authorization"));
   if (!user) {
     return new Response(
       JSON.stringify({ success: false, error: "Unauthorized" }),
@@ -207,19 +199,8 @@ export async function POST(req: Request) {
   }
 
   try {
-    const { messages: uiMessages, wallets, connectedAddress } =
-      await req.json();
+    const { messages: uiMessages, connectedAddress } = await req.json();
     const modelMessages = await convertToModelMessages(uiMessages);
-
-    // Sanitize inputs
-    const knownWallets = Array.isArray(wallets)
-      ? (wallets as { name: string; address: string }[]).filter(
-          (w) =>
-            typeof w.name === "string" &&
-            typeof w.address === "string" &&
-            isValidAddress(w.address)
-        )
-      : undefined;
 
     const sanitizedConnectedAddress =
       typeof connectedAddress === "string" && isValidAddress(connectedAddress)
@@ -227,22 +208,18 @@ export async function POST(req: Request) {
         : undefined;
 
     const systemPrompt = buildSystemPrompt(
-      knownWallets,
+      user.agentWalletName,
+      user.agentWalletAddress,
       sanitizedConnectedAddress
     );
 
-    // Also inject wallet context into the first user message as a hidden prefix,
+    // Inject wallet context into the first user message as a hidden prefix,
     // because some proxies strip or ignore system messages.
     let walletContext = "";
     if (sanitizedConnectedAddress) {
       walletContext += `[Context: User's connected browser wallet is ${sanitizedConnectedAddress}] `;
     }
-    if (knownWallets && knownWallets.length > 0) {
-      const list = knownWallets
-        .map((w) => `"${w.name}": ${w.address}`)
-        .join(", ");
-      walletContext += `[Context: User's agent wallets are: ${list}] `;
-    }
+    walletContext += `[Context: User's agent wallet is "${user.agentWalletName}" at ${user.agentWalletAddress}] `;
     if (walletContext && modelMessages.length > 0) {
       const first = modelMessages[0];
       if (first.role === "user" && Array.isArray(first.content)) {
@@ -263,18 +240,6 @@ export async function POST(req: Request) {
     });
 
     const tools = {
-      create_wallet: {
-        description: "Create a new agent wallet with a given name",
-        inputSchema: z.object({
-          name: z.string().describe("Name for the wallet, e.g. 'My Agent'"),
-        }),
-        execute: async ({ name }: { name: string }) => {
-          const cdp = getCdpClient();
-          const account = await cdp.evm.getOrCreateAccount({ name });
-          return { success: true, name, address: account.address };
-        },
-      },
-
       check_balance: {
         description:
           "Check the ETH and USDC balance of a wallet address on Base Sepolia",
@@ -296,24 +261,14 @@ export async function POST(req: Request) {
 
       request_faucet: {
         description:
-          "Request testnet ETH or USDC from the Base Sepolia faucet for a wallet",
+          "Request testnet ETH or USDC from the Base Sepolia faucet for the user's agent wallet",
         inputSchema: z.object({
-          address: z.string().describe("The wallet address to fund"),
           token: z.enum(["eth", "usdc"]).describe("Which token to request"),
         }),
-        execute: async ({
-          address,
-          token,
-        }: {
-          address: string;
-          token: "eth" | "usdc";
-        }) => {
-          if (!isValidAddress(address)) {
-            return { success: false, error: "Invalid address format" };
-          }
+        execute: async ({ token }: { token: "eth" | "usdc" }) => {
           const cdp = getCdpClient();
           const { transactionHash } = await cdp.evm.requestFaucet({
-            address,
+            address: user.agentWalletAddress,
             network: "base-sepolia",
             token,
           });
@@ -331,11 +286,8 @@ export async function POST(req: Request) {
 
       send_payment: {
         description:
-          "Send ETH or USDC from an agent wallet to a recipient address on Base Sepolia",
+          "Send ETH or USDC from the user's agent wallet to a recipient address on Base Sepolia",
         inputSchema: z.object({
-          fromWalletName: z
-            .string()
-            .describe("Name of the sender agent wallet"),
           toAddress: z
             .string()
             .describe("Recipient wallet address (0x...)"),
@@ -345,12 +297,10 @@ export async function POST(req: Request) {
           token: z.enum(["eth", "usdc"]).describe("Token to send"),
         }),
         execute: async ({
-          fromWalletName,
           toAddress,
           amount,
           token,
         }: {
-          fromWalletName: string;
           toAddress: string;
           amount: string;
           token: "eth" | "usdc";
@@ -359,7 +309,7 @@ export async function POST(req: Request) {
             return { success: false, error: "Invalid recipient address" };
           }
           const result = await executeTransfer({
-            fromWalletName,
+            fromWalletName: user.agentWalletName,
             toAddress,
             amount,
             token,

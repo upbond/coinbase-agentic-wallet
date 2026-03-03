@@ -3,17 +3,14 @@
 import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback, FormEvent } from "react";
-import type { WalletInfo } from "@/app/page";
 import { useLogin3Auth } from "@/contexts/Login3AuthContext";
 
 interface ChatViewProps {
-  wallets: WalletInfo[];
-  onWalletCreated: (wallet: WalletInfo) => void;
-  onRefreshBalance: (address: string) => void;
+  onRefreshBalance: () => void;
   connectedAddress?: string;
 }
 
-// Helper to extract tool name from part type (e.g., "tool-create_wallet" → "create_wallet")
+// Helper to extract tool name from part type (e.g., "tool-check_balance" → "check_balance")
 function getToolName(partType: string): string | null {
   if (partType.startsWith("tool-")) return partType.slice(5);
   return null;
@@ -23,8 +20,6 @@ function getToolName(partType: string): string | null {
 type AnyPart = any;
 
 export default function ChatView({
-  wallets,
-  onWalletCreated,
   onRefreshBalance,
   connectedAddress,
 }: ChatViewProps) {
@@ -33,16 +28,14 @@ export default function ChatView({
   const [input, setInput] = useState("");
 
   // Keep refs so the transport body/headers always have latest data
-  const walletsRef = useRef(wallets);
   const connectedRef = useRef(connectedAddress);
   const idTokenRef = useRef(idToken);
 
   // Update refs in useLayoutEffect to avoid lint errors about accessing refs during render
   useLayoutEffect(() => {
-    walletsRef.current = wallets;
     connectedRef.current = connectedAddress;
     idTokenRef.current = idToken;
-  }, [wallets, connectedAddress, idToken]);
+  }, [connectedAddress, idToken]);
 
   /* eslint-disable react-hooks/refs -- refs are accessed in a lazy callback (body/headers function), not during render */
   const transport = useMemo(
@@ -54,10 +47,6 @@ export default function ChatView({
             : {}),
         }),
         body: () => ({
-          wallets: walletsRef.current.map((w) => ({
-            name: w.name,
-            address: w.address,
-          })),
           connectedAddress: connectedRef.current,
         }),
       }),
@@ -80,28 +69,18 @@ export default function ChatView({
   const processedToolsRef = useRef<Set<string>>(new Set());
 
   const handleToolOutput = useCallback(
-    (toolKey: string, toolName: string, p: AnyPart) => {
+    (toolKey: string, toolName: string) => {
       if (processedToolsRef.current.has(toolKey)) return;
       processedToolsRef.current.add(toolKey);
 
-      if (toolName === "create_wallet") {
-        const result = p.output as { success: boolean; name: string; address: string };
-        if (result?.success && result.address) {
-          onWalletCreated({ name: result.name, address: result.address });
-        }
-      }
-      if (toolName === "check_balance") {
-        const result = p.output as { address?: string };
-        if (result?.address) onRefreshBalance(result.address);
-      }
-      if (toolName === "request_faucet" || toolName === "send_payment") {
-        walletsRef.current.forEach((w) => onRefreshBalance(w.address));
+      if (toolName === "check_balance" || toolName === "request_faucet" || toolName === "send_payment") {
+        onRefreshBalance();
       }
     },
-    [onWalletCreated, onRefreshBalance]
+    [onRefreshBalance]
   );
 
-  // Sync wallet creations from tool calls
+  // Sync balance refreshes from tool calls
   useEffect(() => {
     for (const msg of messages) {
       if (msg.role !== "assistant" || !msg.parts) continue;
@@ -112,7 +91,7 @@ export default function ChatView({
 
         if (p.state === "output-available") {
           const toolKey = `${msg.id}-${toolName}-${p.toolCallId ?? ""}`;
-          handleToolOutput(toolKey, toolName, p);
+          handleToolOutput(toolKey, toolName);
         }
       }
     }
@@ -155,7 +134,7 @@ export default function ChatView({
             {/* Quick Actions */}
             <div className="space-y-2 max-w-xs mx-auto">
               {[
-                "Create a wallet called MyAgent",
+                "What is my wallet address?",
                 "Check my balance",
                 "Get testnet ETH from faucet",
               ].map((suggestion, index) => (

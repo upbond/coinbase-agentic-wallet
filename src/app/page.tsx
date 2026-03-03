@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useLayoutEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useLayoutEffect } from "react";
 import { useAccount } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import WalletView from "@/components/WalletView";
@@ -21,20 +21,33 @@ export default function Home() {
   const { idToken, isLoading: authLoading, isAuthenticated, startLogin, clearSession } = useLogin3Auth();
   const { address: connectedAddress, isConnected } = useAccount();
   const [activeTab, setActiveTab] = useState<TabType>("chat");
-  const [wallets, setWallets] = useState<WalletInfo[]>([]);
-  // Track per-wallet loading state to avoid race conditions
-  const loadingAddresses = useRef<Set<string>>(new Set());
+  const [wallet, setWallet] = useState<WalletInfo | null>(null);
+  const [walletLoading, setWalletLoading] = useState(true);
   const idTokenRef = useRef(idToken);
   useLayoutEffect(() => { idTokenRef.current = idToken; }, [idToken]);
   const [balanceLoading, setBalanceLoading] = useState(false);
 
-  const refreshBalance = useCallback(async (address: string) => {
-    if (loadingAddresses.current.has(address)) return;
-    loadingAddresses.current.add(address);
+  // Auto-fetch wallet on mount
+  useEffect(() => {
+    if (!isAuthenticated || !idToken) return;
+    setWalletLoading(true);
+    fetch("/api/wallet", {
+      headers: { Authorization: `Bearer ${idToken}` },
+    })
+      .then((res) => res.json())
+      .then((json) => {
+        if (json.success) setWallet(json.data);
+      })
+      .catch((err) => console.error("Wallet fetch error:", err))
+      .finally(() => setWalletLoading(false));
+  }, [isAuthenticated, idToken]);
+
+  const refreshBalance = useCallback(async () => {
+    if (!wallet || balanceLoading) return;
     setBalanceLoading(true);
     try {
       const res = await fetch(
-        `/api/balance?address=${encodeURIComponent(address)}`,
+        `/api/balance?address=${encodeURIComponent(wallet.address)}`,
         {
           headers: idTokenRef.current
             ? { Authorization: `Bearer ${idTokenRef.current}` }
@@ -43,38 +56,18 @@ export default function Home() {
       );
       const json = await res.json();
       if (json.success) {
-        setWallets((prev) =>
-          prev.map((w) =>
-            w.address === address
-              ? { ...w, ethBalance: json.data.eth, usdcBalance: json.data.usdc }
-              : w
-          )
+        setWallet((prev) =>
+          prev
+            ? { ...prev, ethBalance: json.data.eth, usdcBalance: json.data.usdc }
+            : prev
         );
       }
     } catch (err) {
       console.error("Balance refresh error:", err);
     } finally {
-      loadingAddresses.current.delete(address);
-      if (loadingAddresses.current.size === 0) {
-        setBalanceLoading(false);
-      }
+      setBalanceLoading(false);
     }
-  }, []);
-
-  const refreshAllBalances = useCallback(() => {
-    wallets.forEach((w) => refreshBalance(w.address));
-  }, [wallets, refreshBalance]);
-
-  const handleWalletCreated = useCallback(
-    (wallet: WalletInfo) => {
-      setWallets((prev) => {
-        if (prev.some((w) => w.address === wallet.address)) return prev;
-        return [...prev, wallet];
-      });
-      refreshBalance(wallet.address);
-    },
-    [refreshBalance]
-  );
+  }, [wallet, balanceLoading]);
 
   // ── Auth loading ──
   if (authLoading) {
@@ -133,6 +126,10 @@ export default function Home() {
     );
   }
 
+  const abbrevAddress = wallet
+    ? `${wallet.address.slice(0, 6)}...${wallet.address.slice(-4)}`
+    : null;
+
   return (
     <div
       className="min-h-screen flex flex-col"
@@ -160,6 +157,15 @@ export default function Home() {
           >
             PayAgent
           </span>
+          {abbrevAddress && (
+            <span
+              data-testid="header-wallet-address"
+              className="text-xs font-mono ml-1"
+              style={{ color: "var(--text-tertiary)" }}
+            >
+              {abbrevAddress}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <ConnectButton
@@ -186,18 +192,14 @@ export default function Home() {
             style={{ height: "calc(100vh - 120px)", display: activeTab === "wallet" ? undefined : "none" }}
           >
             <WalletView
-              wallets={wallets}
-              onWalletCreated={handleWalletCreated}
+              wallet={wallet}
               onRefreshBalance={refreshBalance}
-              onRefreshAll={refreshAllBalances}
-              loading={balanceLoading}
+              loading={balanceLoading || walletLoading}
               idToken={idToken}
             />
           </div>
           <div style={{ display: activeTab === "chat" ? undefined : "none", height: "100%" }}>
             <ChatView
-              wallets={wallets}
-              onWalletCreated={handleWalletCreated}
               onRefreshBalance={refreshBalance}
               connectedAddress={isConnected ? connectedAddress : undefined}
             />

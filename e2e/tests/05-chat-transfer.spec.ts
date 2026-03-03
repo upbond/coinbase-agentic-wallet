@@ -9,45 +9,29 @@ test.describe("Section 6-7: Chat Transfer", () => {
   });
 
   test("6-1/6-2: send ETH via chat", async ({ page }) => {
-    await mockChatRoute(page, ["create-wallet", "create-wallet-bob", "send-eth"]);
+    await mockChatRoute(page, "send-eth");
     await page.goto("/");
 
-    // Create two wallets
-    await page.getByTestId("suggestion-0").click();
-    await expect(page.getByTestId("tool-checkmark")).toBeVisible({ timeout: 10000 });
-
-    await page.getByTestId("chat-input").fill("Create another wallet called Bob");
-    await page.getByTestId("chat-submit").click();
-    await expect(page.getByTestId("tool-checkmark").nth(1)).toBeVisible({ timeout: 10000 });
-
-    // Send ETH
-    await page.getByTestId("chat-input").fill("Send 0.00001 ETH from MyAgent to Bob");
+    // Send ETH (wallet auto-created, no need to create wallets)
+    await page.getByTestId("chat-input").fill("Send 0.00001 ETH to 0xabcdefabcdefabcdefabcdefabcdefabcdefabcd");
     await page.getByTestId("chat-submit").click();
 
     await expect(page.getByTestId("tool-indicator-send_payment")).toBeVisible({ timeout: 10000 });
-    await expect(page.getByTestId("tool-checkmark").nth(2)).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId("tool-checkmark")).toBeVisible({ timeout: 10000 });
     await expect(page.getByText("0.00001 ETH", { exact: true })).toBeVisible();
     await expect(page.getByRole("link", { name: "View on BaseScan" })).toBeVisible();
   });
 
   test("7-1/7-2: send USDC via chat", async ({ page }) => {
-    await mockChatRoute(page, ["create-wallet", "create-wallet-bob", "send-usdc"]);
+    await mockChatRoute(page, "send-usdc");
     await page.goto("/");
 
-    // Create two wallets
-    await page.getByTestId("suggestion-0").click();
-    await expect(page.getByTestId("tool-checkmark")).toBeVisible({ timeout: 10000 });
-
-    await page.getByTestId("chat-input").fill("Create another wallet called Bob");
-    await page.getByTestId("chat-submit").click();
-    await expect(page.getByTestId("tool-checkmark").nth(1)).toBeVisible({ timeout: 10000 });
-
     // Send USDC
-    await page.getByTestId("chat-input").fill("Send 1 USDC from MyAgent to Bob");
+    await page.getByTestId("chat-input").fill("Send 1 USDC to 0xabcdefabcdefabcdefabcdefabcdefabcdefabcd");
     await page.getByTestId("chat-submit").click();
 
     await expect(page.getByTestId("tool-indicator-send_payment")).toBeVisible({ timeout: 10000 });
-    await expect(page.getByTestId("tool-checkmark").nth(2)).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId("tool-checkmark")).toBeVisible({ timeout: 10000 });
     await expect(page.getByText("1 USDC", { exact: true })).toBeVisible();
   });
 });

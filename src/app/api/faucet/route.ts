@@ -1,14 +1,13 @@
 import { NextResponse } from "next/server";
-import { isAddress } from "viem";
 import { getCdpClient } from "@/lib/cdp";
 import { publicClient } from "@/lib/viem";
 import { authenticateRequest } from "@/lib/auth";
 
 export const maxDuration = 60;
 
-// POST /api/faucet - Request testnet funds
+// POST /api/faucet - Request testnet funds for the user's agent wallet
 export async function POST(request: Request) {
-  const user = authenticateRequest(request.headers.get("authorization"));
+  const user = await authenticateRequest(request.headers.get("authorization"));
   if (!user) {
     return NextResponse.json(
       { success: false, error: "Unauthorized" },
@@ -17,14 +16,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { address, token = "eth" } = await request.json();
-
-    if (!address || !isAddress(address, { strict: false })) {
-      return NextResponse.json(
-        { success: false, error: "Valid address is required" },
-        { status: 400 }
-      );
-    }
+    const { token = "eth" } = await request.json();
 
     if (token !== "eth" && token !== "usdc") {
       return NextResponse.json(
@@ -35,7 +27,7 @@ export async function POST(request: Request) {
 
     const cdp = getCdpClient();
     const { transactionHash } = await cdp.evm.requestFaucet({
-      address,
+      address: user.agentWalletAddress,
       network: "base-sepolia",
       token,
     });

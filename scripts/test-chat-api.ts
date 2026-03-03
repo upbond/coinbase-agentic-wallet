@@ -1,12 +1,37 @@
 /**
  * PayAgent Chat API automated test
  * Tests tool calling flow directly against the API
- * Covers QA_TEST_PLAN.md sections 2-7, 9, 11
+ *
+ * All endpoints require JWT auth. This script builds a mock JWT
+ * for local testing (the server uses parseIdToken which doesn't
+ * verify signatures, only checks expiry).
  *
  * Usage: npx tsx scripts/test-chat-api.ts
  */
 
 const BASE = "http://localhost:3000";
+
+// Build a mock JWT for local testing (not signature-verified)
+function buildMockJwt(): string {
+  const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(
+    JSON.stringify({
+      sub: "test-user-script",
+      wallet_address: "0xAAAABBBBCCCCDDDD1111222233334444AAAABBBB",
+      email: "test@example.com",
+      iss: "https://login3.test.example.com",
+      iat: Math.floor(Date.now() / 1000) - 60,
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    })
+  ).toString("base64url");
+  return `${header}.${payload}.mock-signature`;
+}
+
+const AUTH_TOKEN = buildMockJwt();
+const AUTH_HEADERS = {
+  "Content-Type": "application/json",
+  Authorization: `Bearer ${AUTH_TOKEN}`,
+};
 
 interface UIMessage {
   id: string;
@@ -25,13 +50,12 @@ function makeUserMessage(text: string): UIMessage {
 
 async function chatRequest(
   messages: UIMessage[],
-  wallets: { name: string; address: string }[] = [],
   connectedAddress?: string
 ): Promise<{ raw: string; lines: string[] }> {
   const res = await fetch(`${BASE}/api/chat`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages, wallets, connectedAddress }),
+    headers: AUTH_HEADERS,
+    body: JSON.stringify({ messages, connectedAddress }),
   });
   if (!res.ok) {
     const text = await res.text();
@@ -78,62 +102,52 @@ function extractTextFromStream(lines: string[]): string {
     .join("");
 }
 
-// ── Section 2: Wallet Creation ──────────────────────────
+// ── Wallet API (GET, auto-created) ──────────────────────
 
-async function test_createWallet() {
-  console.log("\n── 2. create_wallet (QA 2-1〜2-3) ──");
-  const { raw, lines } = await chatRequest(
-    [makeUserMessage("Please create a wallet called TestWallet now. Use the create_wallet tool.")],
-  );
-  const s = analyzeStream(lines);
-  console.log(`  📊 stream: text=${s.text} steps=${s.steps} toolStart=${s.toolStart} toolAvail=${s.toolAvail} toolOutput=${s.toolOutput}`);
+async function test_walletApi() {
+  console.log("\n── Wallet API (GET /api/wallet) ──");
 
-  if (s.toolStart > 0) pass("Tool call initiated");
-  else fail("Tool call NOT initiated");
+  // Authenticated request returns user's auto-created wallet
+  const res1 = await fetch(`${BASE}/api/wallet`, {
+    headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+  });
+  const json1 = await res1.json();
+  if (json1.success && json1.data?.address) pass("Wallet API returns auto-created wallet");
+  else fail("Wallet API failed", JSON.stringify(json1));
 
-  if (s.toolAvail > 0) pass("Tool input parsed");
-  else fail("Tool input NOT parsed");
+  if (/^0x[a-fA-F0-9]{40}$/.test(json1.data?.address || "")) pass("Returns valid address format");
+  else fail("Invalid address format", json1.data?.address);
 
-  if (s.toolOutput > 0) pass("Tool executed successfully");
-  else fail("Tool NOT executed");
+  if (json1.data?.name?.startsWith("user_")) pass("Wallet name follows user_ convention");
+  else fail("Wallet name does not follow convention", json1.data?.name);
 
-  if (s.steps >= 2) pass(`Multi-step: ${s.steps} steps (AI responded after tool)`);
-  else fail(`Only ${s.steps} step(s) — AI did NOT respond after tool result`);
-
-  const hasAddress = /0x[a-fA-F0-9]{40}/.test(raw);
-  if (hasAddress) pass("Wallet address in response");
-  else fail("No wallet address in response");
+  // Unauthenticated request returns 401
+  const res2 = await fetch(`${BASE}/api/wallet`);
+  if (res2.status === 401) pass("Wallet API rejects unauthenticated (401)");
+  else fail(`Wallet API did not reject unauthenticated (got ${res2.status})`);
 }
 
-// ── Section 2: Wallet Context ──────────────────────────
+// ── Wallet Context (AI knows the wallet) ─────────────────
 
 async function test_walletContext() {
-  console.log("\n── 2. wallet context (QA 2-4, no tool needed) ──");
-  const wallets = [
-    { name: "MyAgent", address: "0xAAAABBBBCCCCDDDD1111222233334444AAAABBBB" },
-  ];
+  console.log("\n── Wallet context (AI knows user's auto-created wallet) ──");
   const { raw, lines } = await chatRequest(
     [makeUserMessage("What wallets do I have? Just tell me from what you know.")],
-    wallets,
   );
 
   const allText = extractTextFromStream(lines);
   console.log(`  📋 AI response: ${allText.slice(0, 300)}`);
 
-  if (raw.includes("MyAgent")) pass("Response mentions MyAgent");
-  else fail("Response does NOT mention MyAgent");
-
-  if (raw.toLowerCase().includes("aaaa") || raw.toLowerCase().includes("bbbb")) pass("Response includes address");
-  else fail("Response does NOT include address");
+  if (raw.includes("user_test-user-script_wallet") || raw.includes("0x")) pass("Response mentions user wallet");
+  else fail("Response does NOT mention wallet");
 }
 
-// ── Section 1-4: Connected Wallet ──────────────────────
+// ── Connected Wallet ──────────────────────────────────
 
 async function test_connectedWallet() {
-  console.log("\n── 1-4. connected wallet recognition ──");
+  console.log("\n── Connected wallet recognition ──");
   const { raw, lines } = await chatRequest(
     [makeUserMessage("What is my connected browser wallet address?")],
-    [],
     "0xAbCdEf1234567890AbCdEf1234567890AbCdEf12",
   );
 
@@ -144,16 +158,12 @@ async function test_connectedWallet() {
   else fail("Connected address NOT recognized");
 }
 
-// ── Section 3: Check Balance ──────────────────────────
+// ── Check Balance ──────────────────────────────────
 
 async function test_checkBalance() {
-  console.log("\n── 3. check_balance (QA 3-1〜3-2) ──");
-  const wallets = [
-    { name: "TestWallet", address: "0x0000000000000000000000000000000000000000" },
-  ];
+  console.log("\n── check_balance ──");
   const { raw, lines } = await chatRequest(
-    [makeUserMessage("Check the balance of TestWallet. Use the check_balance tool with address 0x0000000000000000000000000000000000000000.")],
-    wallets,
+    [makeUserMessage("Check my wallet balance. Use the check_balance tool.")],
   );
   const s = analyzeStream(lines);
   console.log(`  📊 stream: text=${s.text} steps=${s.steps} toolStart=${s.toolStart} toolAvail=${s.toolAvail} toolOutput=${s.toolOutput}`);
@@ -173,13 +183,15 @@ async function test_checkBalance() {
   else fail("USDC not mentioned");
 }
 
-// ── Section 9: Balance API (Wallet tab backend) ──────────
+// ── Balance API ──────────────────────────────────────
 
 async function test_balanceApi() {
-  console.log("\n── 9. Balance API endpoint ──");
+  console.log("\n── Balance API endpoint ──");
 
-  // Valid address
-  const res1 = await fetch(`${BASE}/api/balance?address=0x0000000000000000000000000000000000000000`);
+  // Valid address (with auth)
+  const res1 = await fetch(`${BASE}/api/balance?address=0x0000000000000000000000000000000000000000`, {
+    headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+  });
   const json1 = await res1.json();
   if (json1.success && json1.data) pass("Balance API returns data for valid address");
   else fail("Balance API failed for valid address", JSON.stringify(json1));
@@ -190,78 +202,42 @@ async function test_balanceApi() {
   if (json1.data?.usdc !== undefined) pass("USDC balance field present");
   else fail("USDC balance field missing");
 
-  // Invalid address
-  const res2 = await fetch(`${BASE}/api/balance?address=invalid`);
+  // Invalid address (with auth)
+  const res2 = await fetch(`${BASE}/api/balance?address=invalid`, {
+    headers: { Authorization: `Bearer ${AUTH_TOKEN}` },
+  });
   if (res2.status === 400) pass("Balance API rejects invalid address (400)");
   else fail(`Balance API did not reject invalid address (got ${res2.status})`);
 
-  // Missing address
-  const res3 = await fetch(`${BASE}/api/balance`);
-  if (res3.status === 400) pass("Balance API rejects missing address (400)");
-  else fail(`Balance API did not reject missing address (got ${res3.status})`);
+  // Unauthenticated
+  const res3 = await fetch(`${BASE}/api/balance?address=0x0000000000000000000000000000000000000000`);
+  if (res3.status === 401) pass("Balance API rejects unauthenticated (401)");
+  else fail(`Balance API did not reject unauthenticated (got ${res3.status})`);
 }
 
-// ── Section 9: Wallet API ──────────────────────────────
-
-async function test_walletApi() {
-  console.log("\n── 9. Wallet API endpoint ──");
-
-  // Valid wallet creation
-  const res1 = await fetch(`${BASE}/api/wallet`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: `test-wallet-${Date.now()}` }),
-  });
-  const json1 = await res1.json();
-  if (json1.success && json1.data?.address) pass("Wallet API creates wallet");
-  else fail("Wallet API failed to create wallet", JSON.stringify(json1));
-
-  if (/^0x[a-fA-F0-9]{40}$/.test(json1.data?.address || "")) pass("Returns valid address format");
-  else fail("Invalid address format", json1.data?.address);
-
-  // Missing name validation
-  const res2 = await fetch(`${BASE}/api/wallet`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: "" }),
-  });
-  if (res2.status === 400) pass("Wallet API rejects empty name (400)");
-  else fail(`Wallet API did not reject empty name (got ${res2.status})`);
-
-  // Too long name validation
-  const res3 = await fetch(`${BASE}/api/wallet`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: "a".repeat(101) }),
-  });
-  if (res3.status === 400) pass("Wallet API rejects too long name (400)");
-  else fail(`Wallet API did not reject too long name (got ${res3.status})`);
-}
-
-// ── Section 11: Edge Cases ──────────────────────────────
+// ── Edge Cases ──────────────────────────────────────
 
 async function test_edgeCases() {
-  console.log("\n── 11. Edge cases ──");
+  console.log("\n── Edge cases ──");
 
-  // Empty messages array
+  // Unauthenticated chat returns 401
   try {
     const res = await fetch(`${BASE}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ messages: [] }),
     });
-    // Should either work (empty response) or return error, but not crash
-    if (res.status < 500) pass("Empty messages array does not crash server");
-    else fail("Empty messages array caused 500 error");
+    if (res.status === 401) pass("Chat API rejects unauthenticated (401)");
+    else fail(`Chat API did not reject unauthenticated (got ${res.status})`);
   } catch {
-    fail("Empty messages array caused network error");
+    fail("Chat API unauthenticated check failed with network error");
   }
 
-  // Transfer API validation
+  // Transfer API validation (with auth) — to and amount required
   const res1 = await fetch(`${BASE}/api/transfer`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ fromName: "", to: "", amount: "" }),
+    headers: AUTH_HEADERS,
+    body: JSON.stringify({ to: "", amount: "" }),
   });
   if (res1.status === 400) pass("Transfer API rejects empty params (400)");
   else fail(`Transfer API did not reject empty params (got ${res1.status})`);
@@ -269,8 +245,8 @@ async function test_edgeCases() {
   // Transfer API invalid address
   const res2 = await fetch(`${BASE}/api/transfer`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ fromName: "test", to: "not-an-address", amount: "1.0", token: "eth" }),
+    headers: AUTH_HEADERS,
+    body: JSON.stringify({ to: "not-an-address", amount: "1.0", token: "eth" }),
   });
   if (res2.status === 400) pass("Transfer API rejects invalid address (400)");
   else fail(`Transfer API did not reject invalid address (got ${res2.status})`);
@@ -278,9 +254,8 @@ async function test_edgeCases() {
   // Transfer API invalid amount
   const res3 = await fetch(`${BASE}/api/transfer`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: AUTH_HEADERS,
     body: JSON.stringify({
-      fromName: "test",
       to: "0x0000000000000000000000000000000000000000",
       amount: "abc",
       token: "eth",
@@ -289,12 +264,11 @@ async function test_edgeCases() {
   if (res3.status === 400) pass("Transfer API rejects invalid amount (400)");
   else fail(`Transfer API did not reject invalid amount (got ${res3.status})`);
 
-  // Transfer API invalid token
+  // Transfer API unsupported token
   const res4 = await fetch(`${BASE}/api/transfer`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: AUTH_HEADERS,
     body: JSON.stringify({
-      fromName: "test",
       to: "0x0000000000000000000000000000000000000000",
       amount: "1.0",
       token: "btc",
@@ -303,32 +277,29 @@ async function test_edgeCases() {
   if (res4.status === 400) pass("Transfer API rejects unsupported token (400)");
   else fail(`Transfer API did not reject unsupported token (got ${res4.status})`);
 
-  // Faucet API validation
+  // Faucet API unsupported token (with auth)
   const res5 = await fetch(`${BASE}/api/faucet`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ address: "invalid" }),
+    headers: AUTH_HEADERS,
+    body: JSON.stringify({ token: "btc" }),
   });
-  if (res5.status === 400) pass("Faucet API rejects invalid address (400)");
-  else fail(`Faucet API did not reject invalid address (got ${res5.status})`);
+  if (res5.status === 400) pass("Faucet API rejects unsupported token (400)");
+  else fail(`Faucet API did not reject unsupported token (got ${res5.status})`);
 
-  // Faucet API invalid token
+  // Faucet API unauthenticated
   const res6 = await fetch(`${BASE}/api/faucet`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      address: "0x0000000000000000000000000000000000000000",
-      token: "btc",
-    }),
+    body: JSON.stringify({ token: "eth" }),
   });
-  if (res6.status === 400) pass("Faucet API rejects unsupported token (400)");
-  else fail(`Faucet API did not reject unsupported token (got ${res6.status})`);
+  if (res6.status === 401) pass("Faucet API rejects unauthenticated (401)");
+  else fail(`Faucet API did not reject unauthenticated (got ${res6.status})`);
 }
 
 // ── Main ──────────────────────────────────────────────
 
 async function main() {
-  console.log("🧪 PayAgent QA Test Suite");
+  console.log("🧪 PayAgent QA Test Suite (User-Scoped Wallets)");
   console.log(`   Target: ${BASE}`);
   console.log(`   Time: ${new Date().toISOString()}\n`);
 
@@ -341,15 +312,16 @@ async function main() {
     process.exit(1);
   }
 
-  // Chat API tests (QA sections 1-3)
-  await test_createWallet();
+  // REST API tests
+  await test_walletApi();
+  await test_balanceApi();
+
+  // Chat API tests
   await test_walletContext();
   await test_connectedWallet();
   await test_checkBalance();
 
-  // REST API tests (QA section 9, 11)
-  await test_balanceApi();
-  await test_walletApi();
+  // Edge cases
   await test_edgeCases();
 
   console.log(`\n══ Results: ${passed} passed, ${failed} failed ══\n`);
