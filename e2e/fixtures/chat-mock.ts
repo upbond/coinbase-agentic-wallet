@@ -178,6 +178,41 @@ export function sendPaymentStream(
   ].join("");
 }
 
+/** Build SSE body for "sign message" scenario */
+export function signMessageStream(
+  message = "Hello CDP!",
+  address = WALLETS.myAgent.address
+): string {
+  const toolCallId = "call_sign_1";
+  const textId = "text_1";
+  const mockSignature = "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890ab1c";
+  const abbrevSig = `${mockSignature.slice(0, 10)}...${mockSignature.slice(-8)}`;
+  const abbrevAddr = `${address.slice(0, 6)}...${address.slice(-4)}`;
+  return [
+    msgStart(),
+    stepStart(),
+    toolInputStart(toolCallId, "sign_message"),
+    toolInputAvailable(toolCallId, "sign_message", { message }),
+    toolOutputAvailable(toolCallId, {
+      success: true,
+      walletAddress: address,
+      message,
+      signature: mockSignature,
+    }),
+    stepFinish(),
+    stepStart(),
+    textStart(textId),
+    textDelta(
+      textId,
+      `Signed with \`${abbrevAddr}\`:\n\nMessage: "${message}"\nSignature: \`${abbrevSig}\``
+    ),
+    textEnd(textId),
+    stepFinish(),
+    msgFinish(),
+    sseDone(),
+  ].join("");
+}
+
 /** Build SSE body for "what is my wallet address?" — plain text response */
 export function walletInfoStream(
   address = WALLETS.myAgent.address
@@ -230,6 +265,7 @@ type ChatScenario =
   | "faucet-usdc"
   | "send-eth"
   | "send-usdc"
+  | "sign-message"
   | "general-response"
   | "slow-response";
 
@@ -242,6 +278,7 @@ const scenarioBuilders: Record<ChatScenario, () => string> = {
     sendPaymentStream(WALLETS.bob.address, "0.00001", "eth"),
   "send-usdc": () =>
     sendPaymentStream(WALLETS.bob.address, "1", "usdc"),
+  "sign-message": () => signMessageStream(),
   "general-response": () =>
     generalResponseStream(
       "I'm PayAgent, your AI payment assistant on Base Sepolia. How can I help?"

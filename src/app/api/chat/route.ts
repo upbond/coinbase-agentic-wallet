@@ -28,6 +28,7 @@ const TOOL_NAMES = [
   "check_balance",
   "request_faucet",
   "send_payment",
+  "sign_message",
 ];
 
 function snakeToPascalTool(snake: string): string {
@@ -176,6 +177,7 @@ Tools available:
 - check_balance: Check ETH and USDC balance of a wallet
 - send_payment: Send ETH or USDC from the user's agent wallet to any address
 - request_faucet: Get testnet ETH or USDC from the faucet
+- sign_message: Sign an arbitrary text message with the user's agent wallet (EIP-191)
 
 Guidelines:
 - IMPORTANT: Call only ONE tool at a time. Never make parallel/simultaneous tool calls. If you need multiple operations (e.g., request both ETH and USDC), call them one at a time sequentially.
@@ -315,6 +317,27 @@ export async function POST(req: Request) {
             token,
           });
           return result;
+        },
+      },
+
+      sign_message: {
+        description:
+          "Sign an arbitrary text message with the user's agent wallet (EIP-191 signature)",
+        inputSchema: z.object({
+          message: z.string().describe("The text message to sign"),
+        }),
+        execute: async ({ message }: { message: string }) => {
+          const cdp = getCdpClient();
+          const { signature } = await cdp.evm.signMessage({
+            address: user.agentWalletAddress as `0x${string}`,
+            message,
+          });
+          return {
+            success: true,
+            walletAddress: user.agentWalletAddress,
+            message,
+            signature,
+          };
         },
       },
     };
