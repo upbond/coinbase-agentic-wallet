@@ -213,6 +213,48 @@ export function signMessageStream(
   ].join("");
 }
 
+/** Build SSE body for "buy product" scenario (x402-style payment) */
+export function buyProductStream(): string {
+  const toolCallId = "call_buy_1";
+  const textId = "text_1";
+  const txHash = "0xabc123def456789012345678901234567890123456789012345678901234abcd";
+  return [
+    msgStart(),
+    stepStart(),
+    toolInputStart(toolCallId, "buy_product"),
+    toolInputAvailable(toolCallId, "buy_product", {}),
+    toolOutputAvailable(toolCallId, {
+      success: true,
+      product: "Premium Weather Data",
+      data: {
+        location: "Base Sepolia Network",
+        temperature: "23°C",
+        condition: "Partly Cloudy",
+        humidity: "62%",
+        wind: "12 km/h NW",
+        forecast: "Clear skies expected over the next 24 hours",
+      },
+      payment: {
+        paid_wei: "10000000000000",
+        tx_hash: txHash,
+        explorer: `https://sepolia.basescan.org/tx/${txHash}`,
+      },
+      explorerUrl: `https://sepolia.basescan.org/tx/${txHash}`,
+    }),
+    stepFinish(),
+    stepStart(),
+    textStart(textId),
+    textDelta(
+      textId,
+      `Purchased **Premium Weather Data** for 0.00001 ETH!\n\n- Temperature: 23°C\n- Condition: Partly Cloudy\n- Humidity: 62%\n\n[View transaction](https://sepolia.basescan.org/tx/${txHash})`
+    ),
+    textEnd(textId),
+    stepFinish(),
+    msgFinish(),
+    sseDone(),
+  ].join("");
+}
+
 /** Build SSE body for "what is my wallet address?" — plain text response */
 export function walletInfoStream(
   address = WALLETS.myAgent.address
@@ -266,6 +308,7 @@ type ChatScenario =
   | "send-eth"
   | "send-usdc"
   | "sign-message"
+  | "buy-product"
   | "general-response"
   | "slow-response";
 
@@ -279,6 +322,7 @@ const scenarioBuilders: Record<ChatScenario, () => string> = {
   "send-usdc": () =>
     sendPaymentStream(WALLETS.bob.address, "1", "usdc"),
   "sign-message": () => signMessageStream(),
+  "buy-product": () => buyProductStream(),
   "general-response": () =>
     generalResponseStream(
       "I'm PayAgent, your AI payment assistant on Base Sepolia. How can I help?"

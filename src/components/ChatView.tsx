@@ -73,7 +73,7 @@ export default function ChatView({
       if (processedToolsRef.current.has(toolKey)) return;
       processedToolsRef.current.add(toolKey);
 
-      if (toolName === "check_balance" || toolName === "request_faucet" || toolName === "send_payment") {
+      if (toolName === "check_balance" || toolName === "request_faucet" || toolName === "send_payment" || toolName === "buy_product") {
         onRefreshBalance();
       }
     },
