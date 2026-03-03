@@ -1,8 +1,9 @@
 import { test, expect } from "@playwright/test";
-import { mockApiRoutes } from "../fixtures/api-mocks";
+import { mockApiRoutes, mockLogin3Session } from "../fixtures/api-mocks";
 
 test.describe("Section 0: Initial Load", () => {
   test.beforeEach(async ({ page }) => {
+    await mockLogin3Session(page);
     await mockApiRoutes(page);
     await page.goto("/");
   });

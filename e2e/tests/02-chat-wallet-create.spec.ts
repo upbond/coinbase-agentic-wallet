@@ -1,9 +1,10 @@
 import { test, expect } from "@playwright/test";
-import { mockApiRoutes, WALLETS } from "../fixtures/api-mocks";
+import { mockApiRoutes, mockLogin3Session, WALLETS } from "../fixtures/api-mocks";
 import { mockChatRoute } from "../fixtures/chat-mock";
 
 test.describe("Section 2: Chat Wallet Creation", () => {
   test.beforeEach(async ({ page }) => {
+    await mockLogin3Session(page);
     await mockApiRoutes(page);
   });
 

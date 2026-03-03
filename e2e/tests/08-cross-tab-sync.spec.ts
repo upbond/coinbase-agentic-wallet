@@ -1,9 +1,10 @@
 import { test, expect } from "@playwright/test";
-import { mockApiRoutes, WALLETS } from "../fixtures/api-mocks";
+import { mockApiRoutes, mockLogin3Session, WALLETS } from "../fixtures/api-mocks";
 import { mockChatRoute } from "../fixtures/chat-mock";
 
 test.describe("Cross-tab Sync", () => {
   test("wallet created in chat appears in Wallet tab", async ({ page }) => {
+    await mockLogin3Session(page);
     await mockApiRoutes(page);
     await mockChatRoute(page, "create-wallet");
     await page.goto("/");

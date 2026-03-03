@@ -1,8 +1,9 @@
 import { test, expect } from "@playwright/test";
-import { mockApiRoutes, WALLETS } from "../fixtures/api-mocks";
+import { mockApiRoutes, mockLogin3Session, WALLETS } from "../fixtures/api-mocks";
 
 test.describe("Section 9: Wallet Tab Operations", () => {
   test.beforeEach(async ({ page }) => {
+    await mockLogin3Session(page);
     await mockApiRoutes(page);
     await page.goto("/");
   });

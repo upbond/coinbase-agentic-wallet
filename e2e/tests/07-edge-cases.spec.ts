@@ -1,9 +1,10 @@
 import { test, expect } from "@playwright/test";
-import { mockApiRoutes } from "../fixtures/api-mocks";
+import { mockApiRoutes, mockLogin3Session } from "../fixtures/api-mocks";
 import { mockChatRoute } from "../fixtures/chat-mock";
 
 test.describe("Section 11: Edge Cases", () => {
   test.beforeEach(async ({ page }) => {
+    await mockLogin3Session(page);
     await mockApiRoutes(page);
     await mockChatRoute(page, "general-response");
     await page.goto("/");
