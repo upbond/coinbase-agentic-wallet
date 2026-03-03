@@ -1,12 +1,18 @@
 import { createOpenAI } from "@ai-sdk/openai";
 import { streamText, convertToModelMessages, stepCountIs } from "ai";
 import { z } from "zod";
-import { isAddress } from "viem";
+import { isAddress, parseEther } from "viem";
 import { getCdpClient } from "@/lib/cdp";
 import { publicClient } from "@/lib/viem";
 import { getBalances } from "@/lib/balance";
 import { executeTransfer } from "@/lib/transfer";
 import { authenticateRequest } from "@/lib/auth";
+import {
+  PAYMENT_REQUIREMENTS,
+  MERCHANT_ADDRESS,
+  verifyPayment,
+  buildProduct,
+} from "@/lib/shop";
 
 export const maxDuration = 60;
 
@@ -29,6 +35,7 @@ const TOOL_NAMES = [
   "request_faucet",
   "send_payment",
   "sign_message",
+  "buy_product",
 ];
 
 function snakeToPascalTool(snake: string): string {
@@ -178,6 +185,7 @@ Tools available:
 - send_payment: Send ETH or USDC from the user's agent wallet to any address
 - request_faucet: Get testnet ETH or USDC from the faucet
 - sign_message: Sign an arbitrary text message with the user's agent wallet (EIP-191)
+- buy_product: Purchase premium weather data using x402-style ETH payment (costs ${PAYMENT_REQUIREMENTS.price_eth} ETH)
 
 Guidelines:
 - IMPORTANT: Call only ONE tool at a time. Never make parallel/simultaneous tool calls. If you need multiple operations (e.g., request both ETH and USDC), call them one at a time sequentially.
@@ -337,6 +345,49 @@ export async function POST(req: Request) {
             walletAddress: user.agentWalletAddress,
             message,
             signature,
+          };
+        },
+      },
+
+      buy_product: {
+        description: `Purchase premium weather data by sending ${PAYMENT_REQUIREMENTS.price_eth} ETH to the merchant on Base Sepolia (x402-style payment)`,
+        inputSchema: z.object({}),
+        execute: async () => {
+          const cdp = getCdpClient();
+          const account = await cdp.evm.getOrCreateAccount({
+            name: user.agentWalletName,
+          });
+          const baseAccount = await account.useNetwork("base-sepolia");
+
+          // Send ETH to merchant
+          const { transactionHash } = await baseAccount.sendTransaction({
+            transaction: {
+              to: MERCHANT_ADDRESS,
+              value: parseEther(PAYMENT_REQUIREMENTS.price_eth),
+            },
+          });
+
+          // Wait for confirmation
+          await publicClient.waitForTransactionReceipt({
+            hash: transactionHash,
+          });
+
+          // Verify payment and get product
+          const verification = await verifyPayment(transactionHash);
+          if (!verification.valid) {
+            return {
+              success: false,
+              error: verification.reason ?? "Payment verification failed",
+              transactionHash,
+              explorerUrl: `https://sepolia.basescan.org/tx/${transactionHash}`,
+            };
+          }
+
+          const product = buildProduct(transactionHash, verification.value);
+          return {
+            success: true,
+            ...product,
+            explorerUrl: `https://sepolia.basescan.org/tx/${transactionHash}`,
           };
         },
       },
